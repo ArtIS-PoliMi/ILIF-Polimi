@@ -1,14 +1,16 @@
 #include <AccelStepper.h>  // by Mike McCauley https://github.com/waspinator/AccelStepper
 #include <MultiStepper.h>  // inside AccelStepper, more info: https://www.airspayce.com/mikem/arduino/AccelStepper/classMultiStepper.html#details
+#include <EEPROM.h>
 
 /**Codice Gaia**/
 // PARAMETRI PER ILIF:
 long goBackSteps = 200;     // number of steps to go back after an endstop is encountered
 int defaultLaserPos = -1440;
-int newLaserPosTmp = - defaultLaserPos;   // to be printed positive, so it needs a -
-int newLaserPos = defaultLaserPos;
+int laserPosTmp = - defaultLaserPos;   // to be printed positive, so it needs a -
+int laserPos = defaultLaserPos;
 int gaugeAngle = 90;
 int endStop = 0;
+int latestLaserPos;
 
 // Variables for serial communication 
 byte msg[7]; // read message coming from serial port (7 bytes for touch events)
@@ -213,6 +215,16 @@ void setup() {
 
   showMsg("OKinitZero");
 
+  //read latest laser position and update the num box at page 3
+  EEPROM.get(0,latestLaserPos); // address 0 is where the latest laser position is stored
+  Serial1.print("p[3].n2.val=");
+  Serial1.print(latestLaserPos);
+  Serial1.write(0xFF);
+  Serial1.write(0xFF);
+  Serial1.write(0xFF);
+
+
+
 }
 
 void loop() {   // put your main code here, to run repeatedly:
@@ -251,25 +263,21 @@ void loop() {   // put your main code here, to run repeatedly:
           }
           break;
           case 3: // arrow up
-            //executeStringFlag = 1;
             enable = 'r'; 
             executeString(numMot, enable, stepRel);
-            //snprintf(cmd, sizeof(cmd), "%d%c%d", numMot, enable, stepRel); // cmd contains the variables combined in a string
-
           break;
           case 4: // arrow down
-            //executeStringFlag = 1;
             enable = 'r'; 
             executeString(numMot, enable, -stepRel);
-            //snprintf(cmd, sizeof(cmd), "%d%c%d", numMot, enable, stepRel); // cmd contains the variables combined in a string
           break;
           case 5:   // "set laser pos" button
-            newLaserPosTmp = int(- pStepper->currentPosition());
+            laserPosTmp = int(- pStepper->currentPosition());
             Serial1.print("p[3].n0.val=");      // "new laser position"
-            Serial1.print(newLaserPosTmp);
+            Serial1.print(laserPosTmp);
             Serial1.write(0xff);
             Serial1.write(0xff);
             Serial1.write(0xff);
+
           break;
         }
       break; // end page 0
@@ -420,7 +428,7 @@ void loop() {   // put your main code here, to run repeatedly:
           break;
           case 16:    // laser button
             enable = 'a';
-            step = newLaserPos; // already negative (for motor sign convention)
+            step = laserPos; // already negative (for motor sign convention)
             executeString(numMot, enable, step);
           break;
           case 15: // OK
@@ -446,6 +454,20 @@ void loop() {   // put your main code here, to run repeatedly:
         switch(msg[2])
         {
         case 1:   // "yes" = overwrite
+          // latest
+          latestLaserPos = int(pStepper->currentPosition());
+
+          // update the value in the EEPROM
+          EEPROM.put(0,latestLaserPos);
+
+          // update the displayed value
+          Serial1.print("p[3].n2.val=");
+          Serial1.print(latestLaserPos);
+          Serial1.write(0xFF);
+          Serial1.write(0xFF);
+          Serial1.write(0xFF);
+
+          //call the executeString function with appropriate parameters
           enable = 'p';
           executeString(numMot, enable, 0);
         break;
@@ -525,8 +547,8 @@ void executeString(int numMot, char enable, int step){
       }
       
     break;
-    case 'p':  // save current position as default "laser" position
-       newLaserPos = pStepper->currentPosition();
+    case 'p':  // save current position as default "laser" position // WHY NOT WRITE IT DIRECTLY IN THE BUTTON RELEASE EVENT IN PAGE 3 RATHER THAN CREATE A PARTICLUAR CASE????
+       laserPos = pStepper->currentPosition();
     break;
 
     // case 's': // re-do setup procedure
