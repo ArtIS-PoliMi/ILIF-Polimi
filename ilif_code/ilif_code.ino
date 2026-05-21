@@ -1,5 +1,19 @@
+// fix eeprom lui legge un numero a 3 cifre; 
+// change sign eeprom lui 
+
 #include <AccelStepper.h>  // by Mike McCauley https://github.com/waspinator/AccelStepper
 #include <MultiStepper.h>  // inside AccelStepper, more info: https://www.airspayce.com/mikem/arduino/AccelStepper/classMultiStepper.html#details
+#include <EEPROM.h>
+
+/**Codice Gaia**/
+// PARAMETRI PER ILIF:
+long goBackSteps = 200;     // number of steps to go back after an endstop is encountered
+int defaultLaserPos = -1400;
+int laserPosTmp = -defaultLaserPos;   // to be printed positive, so it needs a -
+int laserPos = -defaultLaserPos;
+int gaugeAngle = 90;
+int endStop = 0;
+int latestLaserPos = 0;
 
 // Variables for serial communication 
 byte msg[7]; // read message coming from serial port (7 bytes for touch events)
@@ -39,12 +53,6 @@ int *p1DigitVal[4] = {&p1n0, &p1n1, &p1n2, &p1n3};
 int *p1DigitValtmp[4] = {&p1n0tmp, &p1n1tmp, &p1n2tmp, &p1n3tmp};
 int *p2DigitVal[4] = {&p2n0, &p2n1, &p2n2, &p2n3};
 int *p2DigitValtmp[4] = {&p2n0tmp, &p2n1tmp, &p2n2tmp, &p2n3tmp};
-
-/**Codice Gaia**/
-// PARAMETRI PER ILIF:
-long goBackSteps = 200;     // number of steps to go back after an endstop is encountered
-int pos45steps = -1490;
-int endStop = 0;
 
 const int enPin1 = 8;
 const int dirPin1 = 5;  //pin for the direction, aka positive or negative sign of the movement command
@@ -112,7 +120,7 @@ void increaseDigit(int* pDigit, const char * nexCtrl );
 void decreaseDigit(int* pDigit, const char * nexCtrl );
 void executeString(int numMot, char enable, int step);
 
-/**********Varaibles for Francesco's Code***************/
+/**********Variables for Francesco's Code***************/
 int numMot = 1;
 char enable = 'r';
 int stepRel = 100;       // MAX 2 147 483 647 STEPS
@@ -129,17 +137,17 @@ void showMsg(const char * message){
   Serial1.write(0xff);
   Serial1.write(0xff);
   Serial1.write(0xff);
-  delay(1000);
+  delay(500);
 }
 
-void showNum(long n){
-  Serial1.print("p[0].n0.val=");
+void showNum(int n){
+  Serial1.print("p[0].n1.val=");
   Serial1.print(n);
   Serial1.write(0xff);
   Serial1.write(0xff);
   Serial1.write(0xff);
-  delay(1000);
 }
+
 /*******************************************************/
 
 
@@ -150,75 +158,82 @@ void setup() {
   Serial.begin(115200);
   Serial1.begin(9600);
 
-  showMsg("initialized");
-
   /* setup Gaia*/
   Serial.println("setTimeout");
   Serial.setTimeout(1000);      //10
-  showMsg("setTimeout");
 
-   //stepper settings
-   
-    Serial.println("settings of stepper motors");
-    stepper1.setMaxSpeed(2000);  //5000
-    stepper1.setSpeed(1000);  //5000
-    stepper1.setAcceleration(300000);
-    steppers.addStepper(stepper1);
-    
-    showMsg("steppers");
+  //stepper settings
+  Serial.println("settings of stepper motors");
+  stepper1.setMaxSpeed(2000);  //5000
+  stepper1.setSpeed(1000);  //5000
+  stepper1.setAcceleration(300000);
+  steppers.addStepper(stepper1);
 
-   //pinMode
+  //pinMode
+  pinMode(endStopPin1, INPUT);
+  pinMode(endStopPin2, INPUT);
+  pinMode(switchUpPin, INPUT_PULLUP);
+  pinMode(switchDownPin, INPUT_PULLUP);
+  pinMode(switchHomePin, INPUT_PULLUP);
+  //pinMode(displayEnable, INPUT_PULLUP);
+  pinMode(triggerOutPin, INPUT_PULLUP);
+  pinMode(initFindZeroPin, LOW);
+  pinMode(enPin1, OUTPUT);
   
-    pinMode(endStopPin1, INPUT);
-    pinMode(endStopPin2, INPUT);
-    pinMode(switchUpPin, INPUT_PULLUP);
-    pinMode(switchDownPin, INPUT_PULLUP);
-    pinMode(switchHomePin, INPUT_PULLUP);
-    //pinMode(displayEnable, INPUT_PULLUP);
-    pinMode(triggerOutPin, INPUT_PULLUP);
-    pinMode(initFindZeroPin, LOW);
-    pinMode(enPin1, OUTPUT);
-    
-    showMsg("pinmodes");
+  //read latest laser position and update the num box at page 3
+  EEPROM.get(0,latestLaserPos); // address 0 is where the latest laser position is stored
+  Serial1.print("p[3].n2.val=");
+  Serial1.print(latestLaserPos);
+  Serial1.write(0xFF);
+  Serial1.write(0xFF);
+  Serial1.write(0xFF);
+  laserPos = -latestLaserPos;
 
-    showMsg("initZero");
 
   // initZero: procedura di setup per trovare lo zero all'accensione
+  showMsg("InitZero");
   if (digitalRead(initFindZeroPin) == LOW) {
-    showMsg("f0pinLOW");
     digitalWrite(enPin1, LOW);
-    showMsg("enpin1LOW");
     if (endStopPin1 == HIGH) {
-      showMsg("endstop1HIGH");
       stepper1.runToNewPosition(-500);
     } else if (endStopPin2 == HIGH) {
-      showMsg("endstop2HIGH");
       stepper1.runToNewPosition(500);
     } 
-    showMsg("exgo2stop");
+    
+    // find the endstops
     foundEndstop2 = GoToEndstop(stepper1, 2);
     foundEndstop1 = GoToEndstop(stepper1, 1);
     
-    // if (GoToEndstop(stepper1, 2) == 0 || GoToEndstop(stepper1, 1) == 0) {
-    //     //Serial.println("ERRORE NEL TROVARE LO ZERO. POSSIBILE MALFUNZIONAMENTO DEGLI ENDSTOP. PROCEDERE CON CAUTELA.");
-    //   }
+    if (foundEndstop1 == 0 || foundEndstop2 == 0) {
+      showMsg("ErrorInitZero");
+    }
+
     delay(300);
     // Serial.println("initZero");
     // Serial.println(" ");
     
     pinMode(initFindZeroPin, INPUT_PULLUP);   // cambio; "ora hai trovato lo zero iniziale"
-    showMsg("f0pinHIGH");
   } else {
     digitalWrite(enPin1, HIGH);
-    showMsg("disabled");
   }  //disable driver
 
-  showMsg("Loop");
+  // display default laser position on page 3
+  Serial1.print("p[3].n1.val=");      // "default laser position"
+  Serial1.print(-defaultLaserPos);
+  Serial1.write(0xff);
+  Serial1.write(0xff);
+  Serial1.write(0xff);
+
+  showMsg("OKinitZero");
+
+
+
+
 
 }
 
 void loop() {   // put your main code here, to run repeatedly:
-  if (Serial1.available() ==  7){ // check repeatedly Serial
+  if (Serial1.available() >=  7){ // check repeatedly Serial
     for (int k = 0; k<7; k++){
       msg[k] = Serial1.read();
     }
@@ -230,7 +245,7 @@ void loop() {   // put your main code here, to run repeatedly:
       case 0: // page 0
         switch(msg[2]) // components
         {
-          case 2: // Set Step button 
+          case 3: // Set Step button 
           { 
             // set the values of the digits to corresponding values
             for(int i = 0; i<4; i++){
@@ -251,23 +266,39 @@ void loop() {   // put your main code here, to run repeatedly:
             Serial1.write(0xFF);
     
           }
-          break;
-          case 3: // arrow up
-            //executeStringFlag = 1;
-            enable = 'r'; 
-            executeString(numMot, enable, -stepRel);
-            //snprintf(cmd, sizeof(cmd), "%d%c%d", numMot, enable, stepRel); // cmd contains the variables combined in a string
-
-          break;
-          case 4: // arrow down
-            //executeStringFlag = 1;
+            break;
+          case 4: // arrow up
             enable = 'r'; 
             executeString(numMot, enable, stepRel);
-            //snprintf(cmd, sizeof(cmd), "%d%c%d", numMot, enable, stepRel); // cmd contains the variables combined in a string
-          break;
-          
+            break;
+          case 5: // arrow down
+            enable = 'r'; 
+            executeString(numMot, enable, -stepRel);
+            break;
+          case 6:   // "set laser pos" button
+            laserPosTmp = int(- pStepper->currentPosition());
+            Serial1.print("p[3].n0.val=");      // "new laser position"
+            Serial1.print(laserPosTmp);
+            Serial1.write(0xff);
+            Serial1.write(0xff);
+            Serial1.write(0xff);
+            break;
+          case 7: // Go To button 
+          { 
+            // set the values of the digits to corresponding values
+            for(int i = 0; i<4; i++){
+              Serial1.print("p[2].");
+              Serial1.print(digits[i]);
+              Serial1.print(".val=");
+              Serial1.print(*p2DigitVal[i]);
+              Serial1.write(0xFF);
+              Serial1.write(0xFF);
+              Serial1.write(0xFF);
+            }    
+          }
+            break;
         }
-      break; // end page 0
+        break; // end page 0
   /*************************PAGE 1************************************/
       case 1: 
         switch(msg[2])
@@ -276,42 +307,42 @@ void loop() {   // put your main code here, to run repeatedly:
             pDigit = &p1n3tmp;
             nexCtrl = "n3";
             increaseDigit(pDigit, nexCtrl);
-          break;
+            break;
           case 10: // arrow down 3
             pDigit = &p1n3tmp;
             nexCtrl = "n3";
             decreaseDigit(pDigit, nexCtrl );
-          break;
+            break;
           case 8: // arrow up 2
             pDigit = &p1n2tmp;
             nexCtrl = "n2";
             increaseDigit(pDigit, nexCtrl );
-          break;
+            break;
           case 11: // arrow down 2
             pDigit = &p1n2tmp;
             nexCtrl = "n2";
             decreaseDigit(pDigit, nexCtrl );
-          break;   
+            break;   
           case 7: // arrow up 1
             pDigit = &p1n1tmp;
             nexCtrl = "n1";
             increaseDigit(pDigit, nexCtrl );
-          break;
+            break;
           case 12: // arrow down 1
             pDigit = &p1n1tmp;
             nexCtrl = "n1";
             decreaseDigit(pDigit, nexCtrl );
-          break;  
+            break;  
           case 6: // arrow up 0
             pDigit = &p1n0tmp;
             nexCtrl = "n0";
             increaseDigit(pDigit, nexCtrl );
-          break;
+            break;
           case 13: // arrow down 0
             pDigit = &p1n0tmp;
             nexCtrl = "n0";
             decreaseDigit(pDigit, nexCtrl );
-          break;  
+            break;  
           case 14: // Reset button
             { 
               p1n0tmp = 0;
@@ -328,7 +359,7 @@ void loop() {   // put your main code here, to run repeatedly:
                 Serial1.write(0xFF);
               }
             }
-          break;
+            break;
           case 15: // ok
           {
             // update true values of digits
@@ -349,21 +380,23 @@ void loop() {   // put your main code here, to run repeatedly:
             Serial1.write(0xFF);
             Serial1.write(0xFF);
           }
-          break;
+            break;
           case 1: // back 
             {
             for(int i=0; i<4; i++){
               *p1DigitValtmp[i]=*p1DigitVal[i];
             }
-            Serial1.print("p[0].n0.val=");
-            Serial1.print(stepRel);
-            Serial1.write(0xFF);
-            Serial1.write(0xFF);
-            Serial1.write(0xFF);
+            
+            // Serial1.print("p[0].n0.val=");
+            // Serial1.print(stepRel);
+            // Serial1.write(0xFF);
+            // Serial1.write(0xFF);
+            // Serial1.write(0xFF);
+          
             }
-          break;
+            break;
         }
-      break; // end page 1
+        break; // end page 1
   /*************************PAGE 2************************************/
       case 2:
         switch(msg[2])
@@ -372,42 +405,52 @@ void loop() {   // put your main code here, to run repeatedly:
             pDigit = &p2n3tmp;
             nexCtrl = "n3";
             increaseDigit(pDigit, nexCtrl );
-          break;
+            break;
           case 10: // arrow down 3
             pDigit = &p2n3tmp;
             nexCtrl = "n3";
             decreaseDigit(pDigit, nexCtrl );
-          break;
+            break;
           case 8: // arrow up 2
             pDigit = &p2n2tmp;
             nexCtrl = "n2";
             increaseDigit(pDigit, nexCtrl );
-          break;
+            break;
           case 11: // arrow down 2
             pDigit = &p2n2tmp;
             nexCtrl = "n2";
             decreaseDigit(pDigit, nexCtrl );
-          break;   
+            break;   
           case 7: // arrow up 1
             pDigit = &p2n1tmp;
             nexCtrl = "n1";
             increaseDigit(pDigit, nexCtrl );
-          break;
+            break;
           case 12: // arrow down 1
             pDigit = &p2n1tmp;
             nexCtrl = "n1";
             decreaseDigit(pDigit, nexCtrl );
-          break;  
+            break;  
           case 6: // arrow up 0
             pDigit = &p2n0tmp;
             nexCtrl = "n0";
             increaseDigit(pDigit, nexCtrl );
-          break;
+            break;
           case 13: // arrow down 0
             pDigit = &p2n0tmp;
             nexCtrl = "n0";
             decreaseDigit(pDigit, nexCtrl );
-          break;
+            break;
+          case 14:    // lamp button
+            enable = 'a';
+            step = 0;
+            executeString(numMot, enable, step);
+            break;
+          case 16:    // laser button
+            enable = 'a';
+            step = laserPos; // already negative (for motor sign convention)
+            executeString(numMot, enable, step);
+            break;
           case 15: // OK
             // update true values of digits
             for(int i = 0; i<4; i++){
@@ -415,32 +458,67 @@ void loop() {   // put your main code here, to run repeatedly:
             }
             enable = 'a';
             step = (p2n3 * 1000) + (p2n2 * 100) + (p2n1 * 10) + (p2n0); 
-            executeString(numMot, enable, step);
+            executeString(numMot, enable, -step);
 
-          break;
+            break;
           case 1:// back
+            for(int i=0; i<4; i++){
+              *p2DigitValtmp[i]=*p2DigitVal[i];
+            }
+            break;
 
-          break;
+          case 17:// reset
+          { 
+            p2n0tmp = 0;
+            p2n1tmp = 0;
+            p2n2tmp = 0;
+            p2n3tmp = 0;
+            
+            for (int i=0; i <4; i++){
+              Serial1.print(digits[i]);
+              Serial1.print(".val=");
+              Serial1.print(*p2DigitValtmp[i]);
+              Serial1.write(0xFF);
+              Serial1.write(0xFF);
+              Serial1.write(0xFF);
+            }
+          }
 
-          //!! aggiungere case "laser" e "lamp"
-          // impostano solo il numero (rispettivamente, step=1470 e step=0); il movimento (assoluto) lo dà "ok"
+            break;
+
         }
-      break; // end page 2
+        break; // end page 2
 
   /*************************PAGE 3************************************/
       case 3:
-      //swicth(msg[2])      //!! aggiungere
-      //{
-      // case 1:
-      // break; 
-      //} 
-      break;     
+
+        switch(msg[2])
+        {
+        case 1:   // "yes" = overwrite
+          // latest
+          latestLaserPos = int(-pStepper->currentPosition());
+
+          // update the value in the EEPROM
+          EEPROM.put(0,latestLaserPos);
+
+          // update the displayed value
+          Serial1.print("p[3].n2.val=");
+          Serial1.print(latestLaserPos);
+          Serial1.write(0xFF);
+          Serial1.write(0xFF);
+          Serial1.write(0xFF);
+
+          //call the executeString function with appropriate parameters
+          enable = 'p';
+          executeString(numMot, enable, 0);
+          break;
+        case 3:   // "no" = back
+
+          break;
+        } 
+        break;  // end page 3
+
     } // end switch page
-  
-
-
-
-
   } // end if Serial1.availble
 } // end void loop
 
@@ -484,33 +562,52 @@ void executeString(int numMot, char enable, int step){
 
   // //execute -- codice Gaia
 
-  //step = -step;   // from mirror holder pov to motor pov
-
   switch (enable) {  //sorting serial functions
     //FUNZIONI MOVIMENTO
     case 'a':  //absolute movement
       digitalWrite(*pEnPin, LOW);
       if (GoToEndstop(*pStepper, 1) == 1) {
         pStepper->setCurrentPosition(0);
-        pStepper->runToNewPosition(pStepper->currentPosition());
+        // pStepper->runToNewPosition(pStepper->currentPosition());
         pStepper->moveTo(step);
+        // showMsg("gotAbsComm");
       }
-    break;
+      break;
     case 'r':  //relative movement
       digitalWrite(*pEnPin, LOW);
-      long currPosTmp = pStepper->currentPosition();
-      if (GoToEndstop(*pStepper, 1) == 1) {
-        pStepper->setCurrentPosition(0);
-        pStepper->runToNewPosition(pStepper->currentPosition());
-        pStepper->moveTo(currPosTmp + step);
+      if (step < 0) {   // no backlash compensation needed, can go straight to new position
+        pStepper->move(step);
+      } else {
+        long currPosTmp = pStepper->currentPosition();
+        if (GoToEndstop(*pStepper, 1) == 1) {
+          pStepper->setCurrentPosition(0);
+          // pStepper->runToNewPosition(pStepper->currentPosition());
+          pStepper->moveTo(currPosTmp + step);
+          // showMsg("gotRelComm");
+        }
       }
-    break;
-    // case 'p':  // save current position as default "laser" position
-    //    pos45steps = pStepper->currentPosition();
-    // break;
-    // case 's': // setup procedure
-    //   ...
-    //   break;
+      
+      break;
+    case 'p':  // save current position as default "laser" position // WHY NOT WRITE IT DIRECTLY IN THE BUTTON RELEASE EVENT IN PAGE 3 RATHER THAN CREATE A PARTICLUAR CASE????
+       laserPos = pStepper->currentPosition();
+      break;
+
+    // case 's': // re-do setup procedure
+    //   digitalWrite(enPin1, LOW);
+    //   if (endStopPin1 == HIGH) {
+    //     stepper1.runToNewPosition(-500);
+    //   } else if (endStopPin2 == HIGH) {
+    //     stepper1.runToNewPosition(500);
+    //   } 
+    //   foundEndstop2 = GoToEndstop(stepper1, 2);
+    //   foundEndstop1 = GoToEndstop(stepper1, 1);
+    //   if (foundEndstop1 == 0 || foundEndstop2 == 0) {
+    //     showMsg("ErrorInitZero");
+    //   } else {
+    //     showMsg("OKinitZero");
+    //   }
+    //   delay(300);
+
     // case 'c':   // endstop check
     //   if (digitalRead(endStopPin1)==HIGH )
     //     Serial.println("Ostacolo 1");
@@ -520,7 +617,7 @@ void executeString(int numMot, char enable, int step){
     //     Serial.println("Ostacolo 2");
     //   else
     //     Serial.println("Open 2");
-    //   break;
+    //     break;
     
     // case 'v':  //set motor speed (uStep/second)
     //   pStepper->setMaxSpeed(-step);
@@ -528,19 +625,19 @@ void executeString(int numMot, char enable, int step){
     //   Serial.print(numMot);
     //   Serial.print(" VEL SET: ");
     //   Serial.println(-step);
-    //   break;
+    //     break;
     
     // case 'w':  //test connection
     //   Serial.println("CONNECTED");
-    //   break;
+    //     break;
     // default:  //other letters->do nothing, used 'w' letter
     //   step = 0;
-    // break;
+    //   break;
+
   } // end of switch (enable)
   
 
   //acknowledgements
-  showMsg("acks");
   flagAknManual = true;
   if (digitalRead(switchUpPin) == LOW) {
     digitalWrite(*pEnPin, LOW);
@@ -558,9 +655,13 @@ void executeString(int numMot, char enable, int step){
     flagAknManual = true;
   }
 
-  showMsg("while");
+
+  showNum(int(- pStepper->currentPosition()));
   while (pStepper->distanceToGo()!=0) {    // movement of stepper motor
-    showNum(pStepper->distanceToGo());
+    if (pStepper->currentPosition() % 50 == 0) {
+      showNum(int(- pStepper->currentPosition()));
+      //no update of gauge display during movement, just start and final position
+    }
     // EndStops: check if an endstop is encountered
     if (pStepper->isRunning()==true) {
       if (digitalRead(endStopPin1) == HIGH) {     // Endstop1: minimum angle for mirror holder
@@ -569,12 +670,6 @@ void executeString(int numMot, char enable, int step){
         // Serial1.println("ENDSTOP 1");
         pStepper->runToNewPosition(pStepper->currentPosition() - goBackSteps);    // - bc of sign convention; goes clockwise
         pStepper->setCurrentPosition(0);
-        //print currentPos on Nextion
-        Serial1.print("p[0].n2.val=");
-        Serial1.print(pStepper->currentPosition());
-        Serial1.write(0xFF);
-        Serial1.write(0xFF);
-        Serial1.write(0xFF);
         //delay(100);
         break;
       }
@@ -583,61 +678,52 @@ void executeString(int numMot, char enable, int step){
         pStepper->stop();
         // Serial1.println("ENDSTOP 2");
         pStepper->runToNewPosition(pStepper->currentPosition() + goBackSteps);
-        //print currentPos on Nextion
-        Serial1.print("p[0].n2.val=");
-        Serial1.print(pStepper->currentPosition());
-        Serial1.write(0xFF);
-        Serial1.write(0xFF);
-        Serial1.write(0xFF);
         break;
         // at this point, we do NOT know the position with absolute confidence, due to non-null backlash between the gears!
       }
     }
-
     pStepper->run();
-    showMsg("running");
-  }
-  showMsg("exitedWhile");
+  }   // end of while
+  showNum(int(- pStepper->currentPosition()));
 
-  //print currentPos on Nextion TO BE IMPLEMENTED
-  // Serial1.print("p[0].n2.val=");
-  // Serial1.print(pStepper->currentPosition());
-  // Serial1.write(0xFF);
-  // Serial1.write(0xFF);
-  // Serial1.write(0xFF);
+  // gauge shows position
+  gaugeAngle = int(map(int(- pStepper->currentPosition()), 0, 12800, 90, 450));
+  Serial1.print("p[0].z0.val=");      // refresh or bug fix needed!!
+  Serial1.print(gaugeAngle);
+  Serial1.write(0xff);
+  Serial1.write(0xff);
+  Serial1.write(0xff);
 
 } //end of function executeString
 
 
 // GoToEndstop
 int GoToEndstop(AccelStepper stepper, int endStop) {
-  showMsg("inGo2Stop");
+  long d2go = 0;
   digitalWrite(enPin1, LOW);                                            //enable motor driver
-  showMsg("enPin1LOW");
   if (endStop == 1){
-    showMsg("ES1move");
     stepper.move(MAXRANGE);                                             //set movement target and distanceToGo attribute
   }else if(endStop == 2){
-    showMsg("ES2move");
     stepper.move(-MAXRANGE);
   }
-  showMsg("whiled2go");
   while (stepper.distanceToGo() != 0) {           // while no endstop encountered and maxSteps not reached
     if ((digitalRead(endStopPin1) == HIGH )&& (endStop==1)) {  // endstop 1 encountered
       stepper.stop();
+      d2go = stepper.distanceToGo();
       stepper.runToNewPosition(stepper.currentPosition() - goBackSteps);
       break;
     }
     if ((digitalRead(endStopPin2) == HIGH )&& (endStop==2)) {     // endstop 2 encountered
       stepper.stop();
+      d2go = stepper.distanceToGo();
       stepper.runToNewPosition(stepper.currentPosition() + goBackSteps);
       break;
     }
     stepper.run();  //run movement
+    //no update of gauge display during movement, just start and final position
   }
   
-  showMsg("return");
-  if (stepper.distanceToGo() != 0) {
+  if (d2go != 0) {
     return 1;  // endostop 1 or 2 found
   } else {
     return 0;  // Error - endstop not found
