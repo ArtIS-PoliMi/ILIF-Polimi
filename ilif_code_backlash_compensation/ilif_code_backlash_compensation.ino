@@ -112,9 +112,12 @@ char cmd[32];
 enum Movement {
   CW, // clockwise
   CCW // counterclockwise
-}
+};
 Movement oldMovement = CW;
 Movement newMovement = CW;
+
+int sign = 1;
+int backlashCompensation = 100;
 
 
 
@@ -548,10 +551,10 @@ void ExecuteString(int numMot, char enable, int step){
   switch (enable) {  //sorting serial functions
     case 'a':  //absolute movement
       digitalWrite(*pEnPin, LOW);
+      // every absolute movement goes back to endstop 1 first, which sets oldMovement = CW
       if (GoToEndstop(*pStepper, 1) == 1) {
         pStepper->setCurrentPosition(0);
         pStepper->moveTo(step);
-        oldMovement = CW;
       }
       break;
     case 'r':  //relative movement
@@ -663,11 +666,26 @@ int GoToEndstop(AccelStepper stepper, int endStop) {
 void CompensateBacklash(Movement* pOld, Movement* pNew)
 {
   if(*pNew!=*pOld){
+    if(*pNew == CW && *pOld == CCW){
+      sign = -1; 
+      ShowMsg("CW Compensation"); // debug
+      delay(2000);
+    } else if (*pNew == CCW && *pOld == CW){
+      sign = +1;
+      ShowMsg("CCW Compensation"); // debug
+      delay(2000);
+    }
+
     long positionTmp = pStepper->currentPosition();
-    pStepper->runToNewPosition(pStepper->currentPosition()+backlashCompensation);
-    pStepper->setCurrentPosition(positionTmp);
+    pStepper->runToNewPosition(pStepper->currentPosition()+sign * backlashCompensation);
+    pStepper->setCurrentPosition(positionTmp); // restore position prior to backlash compensation
+    
+    ShowMsg("Compensated"); // debug
+    delay(1000);
   }
   *pOld = *pNew;
+
+
 }
 
 
