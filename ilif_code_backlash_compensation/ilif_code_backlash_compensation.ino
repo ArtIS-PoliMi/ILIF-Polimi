@@ -117,7 +117,7 @@ Movement oldMovement = CW;
 Movement newMovement = CW;
 
 int sign = 1;
-int backlashCompensation = 100;
+int backlashCompensation = 22;
 
 
 
